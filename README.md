@@ -1,5 +1,5 @@
 # Udemy-dl
-**A command line base udemy video downloader for all platform, created in golang.**
+**A command-line based Udemy video downloader for all platform, created in go lang.**
 
 ### How to use
   - You should have udemy account and purchased course.
