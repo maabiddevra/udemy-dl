@@ -2,7 +2,7 @@ name: Go
 
 on:
   push:
-    - "master"
+    branches: [ master ]
 
 jobs:
   build:
