@@ -27,7 +27,7 @@ jobs:
           fi
       - name: Build
         run: go build -o udemy-dl
-      - uses: "maabiddevra/udemy-dl@latest"
+      - uses: actions/checkout@v2
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "latest"
