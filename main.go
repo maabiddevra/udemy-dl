@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/machinebox/progress"
+	"golang.org/x/net/html"
 )
 
 // StreamUrls download link response struct
@@ -80,12 +82,15 @@ type Course struct {
 
 // Udemy struct
 type Udemy struct {
-	AccessToken      string
-	CourseURL        string
-	SelectedCourseID string
-	Start            int
-	End              int
-	Resolution       string
+	AccessToken       string
+	CourseURL         string
+	SelectedCourseID  string
+	Start             int
+	End               int
+	Resolution        string
+	SessionMaxAttempt int
+	CurrentAttempt    int
+	DownloadPath      string
 }
 
 // Udemy URLs
@@ -102,15 +107,22 @@ func main() {
 
 	accessToken := flag.String("access-token", "false", "Authentication Token")
 	CourseURL := flag.String("course-url", "false", "Course URL")
+	Start := flag.Int("start", 0, "Start Lecture Id")
+	End := flag.Int("end", 0, "End Lecture Id")
+	Resolution := flag.String("resolution", "false", "Video Resolution")
+	DownloadPath := flag.String("download-location", "false", "Download Path")
 	flag.Parse()
 
 	u := Udemy{
-		AccessToken:      "Bearer " + *accessToken,
-		CourseURL:        *CourseURL,
-		SelectedCourseID: "false",
-		Start:            0,
-		End:              0,
-		Resolution:       "false",
+		AccessToken:       "Bearer " + *accessToken,
+		CourseURL:         *CourseURL,
+		SelectedCourseID:  "false",
+		Start:             *Start,
+		End:               *End,
+		Resolution:        *Resolution,
+		SessionMaxAttempt: 3,
+		CurrentAttempt:    0,
+		DownloadPath:      *DownloadPath,
 	}
 
 	_, err := u.AuthenticateToken()
@@ -230,6 +242,10 @@ func (u Udemy) GetCourses() (bool, error) {
 // GetCourseDetail to get course detail
 func (u *Udemy) GetCourseDetail() ([]Asset, error) {
 
+	if u.CourseURL != "false" {
+		u.ParseHTMLAndGetCourseID()
+	}
+
 	if u.SelectedCourseID == "false" {
 		u.getCourseID()
 	}
@@ -312,7 +328,8 @@ func (u *Udemy) getVideoResolution() {
 }
 
 // GetDownloadLink to get the video download link
-func (u Udemy) GetDownloadLink(asset Asset) (string, error) {
+func (u *Udemy) GetDownloadLink(asset Asset) error {
+	u.CurrentAttempt = u.CurrentAttempt + 1
 	url := strings.Replace(GetDownloadURL, "{{assetID}}", strconv.Itoa(asset.ID), 1)
 
 	res := u.NewRequest("GET", url)
@@ -325,14 +342,23 @@ func (u Udemy) GetDownloadLink(asset Asset) (string, error) {
 	var videosUrls = response.StreamUrls.Video
 	for i := range videosUrls {
 		if videosUrls[i].Label == u.Resolution {
-			return videosUrls[i].File, nil
+			return u.Download(videosUrls[i].File, asset)
 		}
 	}
 
-	return "", errors.New("[x] Dont have any valid download link, try with different resolution")
+	fmt.Printf("[x] Don't have any valid download link for resolution %v, try with different resolution. \n", u.Resolution)
+
+	if u.SessionMaxAttempt >= u.CurrentAttempt {
+		u.getVideoResolution()
+		u.GetDownloadLink(asset)
+	} else {
+		fmt.Println("[x] Max attempt exceeded, please try again.")
+		os.Exit(0)
+	}
+	return nil
 }
 
-func (u *Udemy) startDownloading(couserAsset []Asset) {
+func (u *Udemy) startDownloading(courseAsset []Asset) {
 	if u.Start == 0 || u.End == 0 {
 		u.getLecturesIDs()
 	}
@@ -342,16 +368,15 @@ func (u *Udemy) startDownloading(couserAsset []Asset) {
 	}
 
 	for l := u.Start; l <= u.End; l++ {
-		downloadLink, err := u.GetDownloadLink(couserAsset[l])
-		if err != nil {
-			fmt.Println(err)
+		if courseAsset[l].ID != 0 {
+			u.GetDownloadLink(courseAsset[l])
 		}
-		Download(downloadLink, couserAsset[l])
 	}
 }
 
 // Download to download files and vidoes
-func Download(downloadURL string, asset Asset) error {
+func (u *Udemy) Download(downloadURL string, asset Asset) error {
+
 	out, err := os.Create(strconv.Itoa(asset.ObjectIndex) + ". " + asset.Title + ".mp4")
 	if err != nil {
 		return errors.New("[x] Error creating a new file, try to download from link" + downloadURL)
@@ -359,6 +384,11 @@ func Download(downloadURL string, asset Asset) error {
 	defer out.Close()
 
 	resp, err := http.Head(downloadURL)
+	if err != nil {
+		fmt.Print(err)
+		return err
+	}
+
 	size, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 	defer resp.Body.Close()
 
@@ -387,4 +417,36 @@ func Download(downloadURL string, asset Asset) error {
 		return copyError
 	}
 	return nil
+}
+
+// ParseHTMLAndGetCourseID it will parse the html content and get course id
+func (u *Udemy) ParseHTMLAndGetCourseID() {
+	res := u.NewRequest("GET", u.CourseURL)
+	defer res.Body.Close()
+
+	body, _ := ioutil.ReadAll(res.Body)
+
+	bodyString := string(body)
+	doc, err := html.Parse(strings.NewReader(bodyString))
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "body" {
+			for _, a := range n.Attr {
+				if a.Key == "data-clp-course-id" {
+					u.SelectedCourseID = a.Val
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+
+	f(doc)
 }
