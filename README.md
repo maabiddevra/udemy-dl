@@ -1,5 +1,6 @@
+# Note: This Project created just for Education purpose.
 # Udemy-dl
-**A command-line based Udemy video downloader for all platform, created in go lang.**
+**A command-line based Udemy video downloader for all platform, created in go lang, For low internet connectivity download the videos and watch offline later.**
 
 ### How to use
   - You should have udemy account and purchased course.
